@@ -1,0 +1,498 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+Load in necessary packages:
+```{r}
+library(dplyr)
+library(purrr)
+library(popbio)
+library(devtools)
+library(popReconstruct)
+library(ggplot2)
+library(gt)
+library(ggpubr)
+```
+Load, minimally clean our data
+```{r}
+setwd("C:/Users/front/Seafile/CloudDocs/Klass/Insect Ecology/BeetleDensity/")
+df <- read.csv("counts_master3.csv")
+df <- df %>% filter(Replicate != 0) #Pesky extra row in the df, let's delete
+df[df==0] <- NA # Values of 0 indicate NA, let's be explicit
+df <- df %>% dplyr::mutate(Treatment = factor(Treatment, levels = c("L", "M", "H"))) %>% arrange(Treatment) # Reorder treatment levels hierarchically, for better figures
+```
+Who counted the most?
+```{r}
+counter_ranks <- df %>%
+  group_by(Counter) %>%
+  dplyr::summarise_at(c("Eggs","Larvae","Pupae","Adult"),sum, na.rm = TRUE) %>%
+  ungroup() %>%
+  rowwise(Counter) %>%
+  mutate(Counter_Total = sum(c_across()))
+```
+I want to explore cannibalism hypothesis for low survivorship in low density setting. 
+Let's explore variability in larvae count for the larvae count day. Does low density cause there to be more lifestage overlap, thus more opportunities for cannibalism?
+Let's define a function to calculate mean and SD for each group in a dataset.
+```{r}
+#+++++++++++++++++++++++++
+# Function to calculate the mean and the standard deviation
+# for each group
+#+++++++++++++++++++++++++
+# data : a data frame
+# varname : the name of a column containing the variable
+#to be summariezed
+# groupnames : vector of column names to be used as
+# grouping variables
+data_summary <- function(data, varname, groupnames){
+  require(plyr)
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE))
+  }
+  data_sum<-ddply(data, groupnames, .fun=summary_func,
+                  varname)
+  data_sum <- rename(data_sum, c("mean" = varname))
+  return(data_sum)
+}
+```
+Let's track totals of all stages per day, grouped by treatment.
+```{r}
+summary_perDay <- df %>%
+  group_by(Treatment, Day) %>%
+  summarise_at(c("Eggs","Larvae","Pupae","Adult"),sum, na.rm = TRUE)
+
+ggplot(data=summary_perDay, aes(x=Day, y=Larvae, group=Treatment)) + 
+  geom_line() +
+  geom_point()
+```
+Waht does variability in larvae count look like over time?
+```{r}
+### Larvae
+day2 <- df %>% filter(Day == 2)
+larvae_df <- data_summary(df, varname = "Larvae", groupnames = c("Treatment", "Day"))
+# Standard deviation of the mean
+ggplot(larvae_df, aes(x=Day, y=Larvae, group=Treatment, color=Treatment)) + 
+  geom_errorbar(aes(ymin=Larvae-sd, ymax=Larvae+sd), width=.1) +
+  geom_line() + geom_point()+
+  scale_color_brewer(palette="Paired")+theme_minimal()
+# Use position_dodge to move overlapped errorbars horizontally
+ggplot(larvae_df, aes(x=Day, y=Larvae, group=Treatment, color=Treatment)) + 
+  geom_errorbar(aes(ymin=Larvae-sd, ymax=Larvae+sd), width=.1, 
+                position=position_dodge(0.05)) +
+  geom_line() + geom_point()+
+  scale_color_brewer(palette="Paired")+theme_minimal()
+```
+Seems like high variance for Low treatment. I want to test significance of this. 
+First, we need to check that these data are normally distributed.
+I'm only aware of Bartless, F-test, Levene to test equality of variance. For all these, you need data to be normally distributed.
+```{r}
+day1.df <- df %>% filter(Day == 1) 
+day2.df <- df %>% filter(Day == 2) 
+day3.df <- df %>% filter(Day == 3) 
+day4.df <- df %>% filter(Day == 4) 
+
+# Check assumptions to perform F-test comparing variances
+L.df <- df %>% filter(Treatment == "L") %>% filter(Day == 2)
+ggqqplot(L.df$Larvae)
+ggdensity(L.df$Larvae) # Weirdly
+
+M.df <- df %>% filter(Treatment == "M") %>% filter(Day == 2)
+ggqqplot(M.df$Larvae)
+ggdensity(M.df$Larvae) # @ peaked...
+
+H.df <- df %>% filter(Treatment == "H") %>% filter(Day == 2) # OK this one looks pretty bad. 
+ggqqplot(H.df$Larvae)
+ggdensity(H.df$Larvae) # It is actuall 2-peaked!
+
+ggdensity(data = day1.df, x = "Eggs", add = "mean", combine = TRUE,title = "Relative density of eggs observed on 1st census day", 
+          color = "Treatment", fill = "Treatment", palette = c("#00AFBB", "#E7B800", "#FC61D5"), ggtheme = theme_pubr()) + 
+  theme(plot.title = element_text(face = "bold", size = 18, hjust = .45),
+        )
+
+ggdensity(data = day2.df, x = "Larvae", add = "mean", combine = TRUE,title = "Relative density of larvae observed on 2nd census day", 
+          color = "Treatment", fill = "Treatment", palette = c("#00AFBB", "#E7B800", "#FC61D5"), ggtheme = theme_pubr()) + 
+  theme(plot.title = element_text(face = "bold", size = 18, hjust = .45),
+        )
+
+ggdensity(data = day3.df, x = "Pupae", add = "mean", combine = TRUE,title = "Relative density of pupae observed on 3rd census day", 
+          color = "Treatment", fill = "Treatment", palette = c("#00AFBB", "#E7B800", "#FC61D5"), ggtheme = theme_pubr()) + 
+  theme(plot.title = element_text(face = "bold", size = 18, hjust = .45),
+        )
+
+ggdensity(data = day4.df, x = "Adult", add = "mean", combine = TRUE,title = "Relative density of adults observed on 4th census day", 
+          color = "Treatment", fill = "Treatment", palette = c("#00AFBB", "#E7B800", "#FC61D5"), ggtheme = theme_pubr()) + 
+  theme(plot.title = element_text(face = "bold", size = 18, hjust = .45),
+        )
+
+  # In general I think it's close enough, let's go ahead and compare those variances. EDIT-- not even close to normal, don't do this
+df.LM <- df %>% filter(Day == 2) %>% filter(Treatment != "H")
+var.LM.larvae <- var.test(Larvae ~ Treatment, data = df.LM)
+
+df.LH <- df %>% filter(Day == 2) %>% filter(Treatment != "M")
+var.LH.larvae <- var.test(Larvae ~ Treatment, data = df.LH)
+
+
+bartlett.larvae <- bartlett.test(Larvae ~ Treatment, data = day2.df)
+summary(bartlett.larvae)
+```
+
+Let's move onto assessing demographic properties of treatments. 
+Start with binning by treatment, then calculating metrics.
+Then, we'll calculate metrics for all replicates, and average these for each treatment.
+```{r}
+
+pop_summary <- df %>%
+  group_by(Treatment, Replicate) %>%
+  dplyr::summarise_at(c("Eggs","Larvae","Pupae","Adult"),sum, na.rm = TRUE) %>%
+  mutate(l_0 = Eggs/Eggs) %>%
+  mutate(l_1 = Larvae/Eggs) %>%
+  mutate(l_2 = Pupae/Eggs) %>%
+  mutate(l_3 = Adult/Eggs) %>%
+  mutate(S_0 = Larvae/Eggs) %>%
+  mutate(S_1 = Pupae/Larvae) %>%
+  mutate(S_2 = Adult/Pupae)
+
+# Hmm, something is fucky here. It is implausible to get more larvae than we had eggs for a particular treatment.
+# Will calculating survivorship b/w stages for each counter reveal an issue? Like did I misinterpret eggs or something?
+
+counter_survivorship <- df %>%
+  group_by(Counter, Replicate) %>%
+  dplyr::summarise_at(c("Eggs","Larvae","Pupae","Adult"),sum, na.rm = TRUE) %>%
+  mutate(l_0 = Eggs/Eggs) %>%
+  mutate(l_1 = Larvae/Eggs) %>%
+  mutate(l_2 = Pupae/Eggs) %>%
+  mutate(l_3 = Adult/Eggs) %>%
+  mutate(S_0 = Larvae/Eggs) %>%
+  mutate(S_1 = Pupae/Larvae) %>%
+  mutate(S_2 = Adult/Pupae)
+
+# Not really. At most points, most of us got values that suggest positive survivorship (l(x)). Not isolated to any individual, although you wouldn't necessarily expect to see that
+# unless you were tracking individual containers with constant counters across the entire experiment.
+
+```
+OK, now let's build lifetables for each repicate.
+```{r}
+# Let's revisit our approach. Because we only counted a subset of eggs, we need average egg counts for each treatment.
+# We only need an estimate of egg production for each treatment. 
+# We get fecundity from this estimate-- # eggs produced for each adult in the initial treatment population. 
+
+df_esti <- df %>%
+  select(-Counter) %>% # No need for counter info from here on out
+  select(-Day) %>% # Nor chronology
+  # estimated egg count per treatment
+  group_by(Treatment) %>%
+  mutate(Eggs_esti = mean(na.omit(Eggs))) %>%
+  ungroup() %>%
+  # initial adult count per treatment
+  mutate(Adults_init = case_when(Treatment == "L" ~ 10,
+                                 Treatment == "M" ~ 20,
+                                 Treatment == "H" ~ 40)) 
+
+# Collapse rows: Treating each replicate as an observation instead of each day of each replicate.
+replicate_overview <- df_esti %>% 
+  group_by(Treatment, Replicate) %>% 
+  dplyr::summarise(
+    Eggs = mean(Eggs_esti), # Let's just call our Egg estimate, Eggs
+    Larvae = sum(Larvae, na.rm = TRUE),
+    Pupae = sum(Pupae, na.rm = TRUE),
+    Adults = sum(Adult, na.rm = TRUE),
+    Adults_init = mean(Adults_init))
+
+replicate_lifetable <- replicate_overview %>%
+  group_by(Treatment, Replicate) %>%
+  # Survivorship: Upper bound 1
+  mutate(l_0 = pmin(Eggs/Eggs,1)) %>%
+  mutate(l_1 = pmin(Larvae/Eggs,1)) %>%
+  mutate(l_2 = pmin(Pupae/Eggs,1)) %>%
+  mutate(l_3 = pmin(Adults/Eggs,1)) %>%
+  # Age-specific survival rate: Upper bound 1
+  mutate(S_0 = pmin(Larvae/Eggs,1)) %>%
+  mutate(S_1 = pmin(Pupae/Larvae,1)) %>%
+  mutate(S_2 = pmin(Adults/Pupae,1)) %>%
+  # Fecundity
+  mutate(F_0 = 0) %>%
+  mutate(F_1 = 0) %>%
+  mutate(F_2 = 0) %>%
+  mutate(F_3 = Eggs/Adults_init) %>%
+  # Empirical Lambda
+  mutate(Empirical_Lambda = Adults /Adults_init)
+```
+Now throwing in more advanced metrics (stable eigenvalue etc.)
+```{r}
+proj_df <- data.frame(Treatment=character(30),
+                      Replicate=character(30),
+                      Emp_Eggs=integer(30),
+                      Emp_Larvae=integer(30),
+                      Emp_Pupae=integer(30),
+                      Emp_Adults=integer(30),
+                      Lambda=double(30),
+                      Stable_Lambda=double(30),
+                      Empirical_Lambda=double(30),
+                      Projected_n_t1=double(30),
+                      Projected_n_t5=double(30),
+                      Projected_n_t10=double(30),
+                      ReproductiveValue_Eggs=double(30),
+                      ReproductiveValue_Larvae=double(30),
+                      ReproductiveValue_Pupae=double(30),
+                      ReproductiveValue_Adults=double(30),
+                      Sensitivity_Surv_EggLarvae=double(30),
+                      Sensitivity_Surv_LarvaePupae=double(30),
+                      Sensitivity_Surv_PupaeAdult=double(30),
+                      Sensitivity_Fecundity=double(30),
+                      Elasticity_Surv_EggLarvae=double(30),
+                      Elasticity_Surv_LarvaePupae=double(30),
+                      Elasticity_Surv_PupaeAdult=double(30),
+                      Elasticity_Fecundity=double(30),
+                      Survivorship_EggToLarvae=double(30),
+                      Survivorship_LarvaeToPupae=double(30),
+                      Survivorship_PupaeToAdult=double(30),
+                      Fecundity=double(30)
+                      )
+
+projs <- vector("list", 30)
+eigens <- vector("list", 30)
+leslies <- vector("list", 30)
+leslies_pure <- vector("list", 30)
+
+for (i in 1:30){
+  rep_i = replicate_lifetable[i,]
+  UnitID = paste0(rep_i$Treatment,'-',rep_i$Replicate)
+  # new_mat_str = paste0("leslie",UnitID)
+  les_i = array(NA, dim = c(4,5))
+  les_i[1,1:4] = as.vector(c(rep_i$F_0,rep_i$F_1,rep_i$F_2,rep_i$F_3)) # Fecundity vector
+  les_i[,5] = as.vector(c(0,0,0,rep_i$Eggs)) # initial population vector
+  les_i[2,1] = rep_i$l_1
+  les_i[3:4,1] = 0
+  les_i[3,2] = rep_i$l_2
+  les_i[2,2] = 0
+  les_i[4,2] = 0
+  les_i[4,3] = rep_i$l_3
+  les_i[2:3,3] = 0
+  les_i[2:4,4] = 0
+  leslies[[i]] <- les_i
+  leslies_pure[[i]] <- les_i[,1:4]
+  proj = pop.projection(leslies[[i]][,1:4],leslies[[i]][,5],10)
+  projs[[i]] <- proj
+  eigen = popbio::eigen.analysis(les_i[,1:4], zero = TRUE)
+  eigens[[i]] <- eigen
+  # Pull specific metrics to add to proj_df
+  proj_df[i,]$Treatment = replicate_lifetable[i,]$Treatment
+  proj_df[i,]$Replicate = replicate_lifetable[i,]$Replicate
+  proj_df[i,]$Emp_Eggs = replicate_lifetable[i,]$Eggs
+  proj_df[i,]$Emp_Larvae = replicate_lifetable[i,]$Larvae
+  proj_df[i,]$Emp_Pupae = replicate_lifetable[i,]$Pupae
+  proj_df[i,]$Emp_Adults = replicate_lifetable[i,]$Adults
+  proj_df[i,]$Lambda = projs[[i]]$lambda[1]
+  proj_df[i,]$Stable_Lambda = eigens[[i]]$lambda1[1]
+  proj_df[i,]$Empirical_Lambda = replicate_lifetable[i,]$Empirical_Lambda
+  proj_df[i,]$Projected_n_t1 = projs[[i]]$pop.sizes[1]
+  proj_df[i,]$Projected_n_t5 = projs[[i]]$pop.sizes[5]
+  proj_df[i,]$Projected_n_t10 = projs[[i]]$pop.sizes[10]
+  proj_df[i,]$ReproductiveValue_Eggs = eigens[[i]]$repro.value[1]
+  proj_df[i,]$ReproductiveValue_Larvae = eigens[[i]]$repro.value[2]
+  proj_df[i,]$ReproductiveValue_Pupae = eigens[[i]]$repro.value[3]
+  proj_df[i,]$ReproductiveValue_Adults = eigens[[i]]$repro.value[4]
+  proj_df[i,]$Sensitivity_Surv_EggLarvae = eigens[[i]]$sensitivities[[2,1]]
+  proj_df[i,]$Sensitivity_Surv_LarvaePupae = eigens[[i]]$sensitivities[[3,2]]
+  proj_df[i,]$Sensitivity_Surv_PupaeAdult = eigens[[i]]$sensitivities[[4,3]]
+  proj_df[i,]$Sensitivity_Fecundity = eigens[[i]]$sensitivities[[1,4]]
+  proj_df[i,]$Elasticity_Surv_EggLarvae = eigens[[i]]$elasticities[[2,1]]
+  proj_df[i,]$Elasticity_Surv_LarvaePupae = eigens[[i]]$elasticities[[3,2]]
+  proj_df[i,]$Elasticity_Surv_PupaeAdult = eigens[[i]]$elasticities[[4,3]]
+  proj_df[i,]$Elasticity_Fecundity = eigens[[i]]$elasticities[[1,4]]
+  proj_df[i,]$Survivorship_EggToLarvae = replicate_lifetable[i,]$S_0
+  proj_df[i,]$Survivorship_LarvaeToPupae = replicate_lifetable[i,]$S_1
+  proj_df[i,]$Survivorship_PupaeToAdult = replicate_lifetable[i,]$S_2
+  proj_df[i,]$Fecundity = replicate_lifetable[i,]$F_3
+}
+```
+Get averages of all metrics across all replicates for each treatment.
+```{r}
+# Get averages for different treatments
+proj_summary <- proj_df %>%
+  group_by(Treatment) %>%
+  dplyr::summarise(
+    Eggs = mean(Emp_Eggs),
+    Larvae = mean(Emp_Larvae),
+    Pupae = mean(Emp_Pupae),
+    Adults = mean(Emp_Adults),
+    Empirical_Lambda = mean(Lambda),
+    Stable_Lambda = mean(Stable_Lambda),
+    Projected_N_t1 = mean(Projected_n_t1),
+    Projected_N_t5 = mean(Projected_n_t5),
+    Projected_N_t10 = mean(Projected_n_t10),
+    ReproductiveValue_Eggs = mean(ReproductiveValue_Eggs),
+    ReproductiveValue_Larvae = mean(ReproductiveValue_Larvae),
+    ReproductiveValue_Pupae = mean(ReproductiveValue_Pupae),
+    ReproductiveValue_Adults = mean(ReproductiveValue_Adults),
+    Sensitivity_Surv_EggLarvae = mean(Sensitivity_Surv_EggLarvae),
+    Sensitivity_Surv_LarvaePupae = mean(Sensitivity_Surv_LarvaePupae),
+    Sensitivity_Surv_PupaeAdult = mean(Sensitivity_Surv_PupaeAdult),
+    Sensitivity_Fecundity = mean(Sensitivity_Fecundity),
+    Elasticity_Surv_EggLarvae = mean(Elasticity_Surv_EggLarvae),
+    Elasticity_Surv_LarvaePupae = mean(Elasticity_Surv_LarvaePupae),
+    Elasticity_Surv_PupaeAdult = mean(Elasticity_Surv_PupaeAdult),
+    Elasticity_Fecundity = mean(Elasticity_Fecundity),
+    Survivorship_EggToLarvae=mean(Survivorship_EggToLarvae),
+    Survivorship_LarvaeToPupae=mean(Survivorship_LarvaeToPupae),
+    Survivorship_PupaeToAdult=mean(Survivorship_PupaeToAdult),
+    Fecundity=mean(Fecundity)
+  )
+
+leslies_H <- leslies_pure[1:10]
+leslies_H_array <- array(as.numeric(unlist(leslies_H)), dim = c(4,4,30))
+leslie_H_mean <- apply( leslies_H_array , 1:2 , mean )
+write.csv(leslie_H_mean, "leslie_H_mean.csv")
+
+leslies_M <- leslies_pure[21:30]
+leslies_M_array <- array(as.numeric(unlist(leslies_M)), dim = c(4,4,30))
+leslie_M_mean <- apply( leslies_M_array , 1:2 , mean )
+write.csv(leslie_M_mean, "leslie_M_mean.csv")
+
+leslies_L <- leslies_pure[11:20]
+leslies_L_array <- array(as.numeric(unlist(leslies_L)), dim = c(4,4,30))
+leslie_L_mean <- apply( leslies_L_array , 1:2 , mean )
+write.csv(leslie_L_mean, "leslie_L_mean.csv")
+```
+
+Test significance of Lambdas, Reproductive Values w/ ANOVAs
+```{r}
+print("one.way.Stable_Lambda")
+one.way.Stable_Lambda <- aov(Stable_Lambda ~ Treatment, data = proj_df)
+summary(one.way.Stable_Lambda)
+
+print("one.way.Empirical_Lambda")
+one.way.Empirical_Lambda <- aov(Empirical_Lambda ~ Treatment, data = proj_df)
+summary(one.way.Empirical_Lambda)
+
+print("one.way.RV_Pupae")
+one.way.RV_Pupae <- aov(ReproductiveValue_Pupae ~ Treatment, data = proj_df)
+summary(one.way.RV_Pupae)
+
+print("one.way.RV.Larvae")
+one.way.RV.Larvae <- aov(ReproductiveValue_Larvae ~ Treatment, data = proj_df)
+summary(one.way.RV.Larvae)
+
+print("one.way.RV_Adults")
+one.way.RV_Adults <- aov(ReproductiveValue_Adults ~ Treatment, data = proj_df)
+summary(one.way.RV_Adults)
+
+print("one.way.Sens_Surv_EggLarvae")
+one.way.Sens_Surv_EggLarvae <- aov(Sensitivity_Surv_EggLarvae ~ Treatment, data = proj_df)
+summary(one.way.Sens_Surv_EggLarvae)
+
+print("one.way.Sens_Surv_LarvaePupae")
+one.way.Sens_Surv_LarvaePupae <- aov(Sensitivity_Surv_LarvaePupae ~ Treatment, data = proj_df)
+summary(one.way.Sens_Surv_LarvaePupae)
+
+print("one.way.Sens_Surv_PupaeAdult")
+one.way.Sens_Surv_PupaeAdult <- aov(Sensitivity_Surv_PupaeAdult ~ Treatment, data = proj_df)
+summary(one.way.Sens_Surv_PupaeAdult)
+
+print("one.way.Sens_Fecundity")
+one.way.Sens_Fecundity <- aov(Sensitivity_Fecundity ~ Treatment, data = proj_df)
+summary(one.way.Sens_Fecundity)
+
+print("one.way.Elast_Surv_EggLarvae")
+one.way.Elast_Surv_EggLarvae <- aov(Elasticity_Surv_EggLarvae ~ Treatment, data = proj_df)
+summary(one.way.Elast_Surv_EggLarvae)
+
+print("one.way.Elast_Surv_LarvaePupae")
+one.way.Elast_Surv_LarvaePupae <- aov(Elasticity_Surv_LarvaePupae ~ Treatment, data = proj_df)
+summary(one.way.Elast_Surv_LarvaePupae)
+
+print("one.way.Elast_Surv_PupaeAdult")
+one.way.Elast_Surv_PupaeAdult <- aov(Elasticity_Surv_PupaeAdult ~ Treatment, data = proj_df)
+summary(one.way.Elast_Surv_PupaeAdult)
+
+print("one.way.Elast_Fecundity")
+one.way.Elast_Fecundity <- aov(Elasticity_Fecundity ~ Treatment, data = proj_df)
+summary(one.way.Elast_Fecundity)
+
+
+
+
+print("one.way.Surv_EggLarvae")
+one.way.Surv_EggLarvae <- aov(Survivorship_EggToLarvae ~ Treatment, data = proj_df)
+summary(one.way.Surv_EggLarvae)
+
+print("one.way.Surv_LarvaePupae")
+one.way.Surv_LarvaePupae <- aov(Survivorship_LarvaeToPupae ~ Treatment, data = proj_df)
+summary(one.way.Surv_LarvaePupae)
+
+print("one.way.Surv_PupaeAdult")
+one.way.Surv_PupaeAdult <- aov(Survivorship_PupaeToAdult ~ Treatment, data = proj_df)
+summary(one.way.Surv_PupaeAdult)
+
+print("one.way.Fecundity")
+one.way.Fecundity <- aov(Elasticity_Fecundity ~ Treatment, data = proj_df)
+summary(one.way.Fecundity)
+
+```
+Let's fit a curve to a scatter to demonstrate the opposing effects of survivorship & fecundity across densities.
+```{r}
+# Hotfix to change numeric treatment levels (weird) back to ordered characters
+#proj_df$Treatment <- recode_factor(proj_summary$Treatment, '1' = 10L, '2' = 20L, '3' = 40L)
+proj_df2 <- proj_df
+proj_summary2 <- proj_summary
+#proj_df2$Treatment <- recode_factor(proj_summary$Treatment, '1' = 10, '2' = 20, '3' = 40)
+
+proj_df2$Initial_Adult_N = double(30)
+proj_df2$Initial_Adult_N[1:10] = 10L
+proj_df2$Initial_Adult_N[11:20] = 20L
+proj_df2$Initial_Adult_N[21:30] = 40L
+proj_summary2$Initial_Adult_N = double(3)
+proj_summary2$Initial_Adult_N[1] = 10L
+proj_summary2$Initial_Adult_N[2] = 20L
+proj_summary2$Initial_Adult_N[3] = 40L
+proj_summary2$LambdaLabel = character(3)
+proj_summary2$LambdaLabel[1] = "Stable \u03BB = 0.58\n Low Density"
+proj_summary2$LambdaLabel[2] = "Stable \u03BB = 0.93\n Med Density"
+proj_summary2$LambdaLabel[3] = "Stable \u03BB = 0.87\n High Density"
+
+coeff = 0.15
+
+ggplot(data = proj_df2, aes(x = Initial_Adult_N)) +
+  geom_smooth(aes(y = Fecundity * coeff), se = FALSE, color = "darkorchid2") + 
+  geom_smooth(aes(y = Survivorship_EggToLarvae), se = FALSE, color = "#00AFBB") +
+  geom_smooth( aes(y = Survivorship_LarvaeToPupae), se = FALSE, color = "#E7B800") +
+  geom_smooth( aes(y = Survivorship_PupaeToAdult), se = FALSE, color = "#FC61D5") +
+  geom_point(data = proj_summary2, aes(x = Initial_Adult_N, y = Stable_Lambda), color = "yellow2",   size = 10) +
+  xlab(expression(paste("Initial adult ", italic("Tribolium castaneum"), " population"))) +
+  geom_text(data = proj_summary2, aes(y = Stable_Lambda, label = LambdaLabel), vjust=-0.7, color = "grey0") +
+  expand_limits(x = c(5, 45)) +
+
+
+  scale_y_continuous(
+    # The first axis...
+    name = "Survivorship probability from egg to larva",
+    
+    # The second...
+    sec.axis = sec_axis(~.*coeff, name = "Fecundity (eggs / adult)", labels = c("0", "2.5", "5", "7.5", "10"))
+    ) +
+  theme_pubr() + 
+  theme(
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(color = "#00AFBB", size = 15, vjust = 2),
+    axis.title.y.right = element_text(color = "darkorchid2", size = 15, vjust = 2)
+  ) 
+  ggsave("Figs/Survivorship1.Fecundity.Complementary.DensityDependency.png")# +
+  
+  #ggtitle("Conspecific Competition between Developmental Stages and between Adults are Asymmetrically Density-Dependent")
+
+```
+
+Test sex-ratio hypothesis: What does within-treatment variability of Egg -> Larvae survivorship look like?
+```{r}
+ggdensity(data = replicate_lifetable, x = "S_0", color = "Treatment") # These look fairly normal. Could do Levene's or Filgner-Killeen. I'll do Filgner-Killeen since it is super-robust to departures from normality.
+fligner.test(S_0 ~ Treatment, data = replicate_lifetable)
+
+
+
+
+```
