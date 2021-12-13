@@ -13,10 +13,8 @@ library(dplyr)
 library(purrr)
 library(popbio)
 library(devtools)
-library(popReconstruct)
 library(ggplot2)
-library(gt)
-library(ggpubr)
+library(ggpubr) 
 ```
 Load, minimally clean our data
 ```{r}
@@ -191,7 +189,8 @@ df_esti <- df %>%
   # initial adult count per treatment
   mutate(Adults_init = case_when(Treatment == "L" ~ 10,
                                  Treatment == "M" ~ 20,
-                                 Treatment == "H" ~ 40)) 
+                                 Treatment == "H" ~ 40))
+
 
 # Collapse rows: Treating each replicate as an observation instead of each day of each replicate.
 replicate_overview <- df_esti %>% 
@@ -496,3 +495,14 @@ fligner.test(S_0 ~ Treatment, data = replicate_lifetable)
 
 
 ```
+```{r}
+library(renv)
+renv::dependencies()
+```
+TO-DO: Track population per life-stage per census day, but including egg estimate
+```{r}
+summary_perDay <- df %>% # change this to use a df w/ eggs post-estiamtion as base df
+  group_by(Treatment, Day) %>%
+  summarise_at(c("Eggs","Larvae","Pupae","Adult"),sum, na.rm = TRUE)
+```
+
